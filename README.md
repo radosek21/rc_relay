@@ -1,2 +1,1 @@
-# rc_relay
-433MHz RC relay module
+# 433MHz RC relay module
