@@ -3,11 +3,10 @@
 
 // ***** DEFIDES *****
 #define DIP_SWITCH_INPUTS_CNT   ( 6 )
-#define RELAY_PULSE_DURATION    ( 1000 ) // ms
+#define RELAY_ON_TIME           ( 1000 ) // ms
+#define RELAY_OFF_TIME          ( 1000 ) // ms
 #define RELAY_1_PORT            ( 10 ) // D10
 #define RELAY_2_PORT            ( 9 ) // D9
-#define DIP_SWITCH_READ_PERIOD  ( 1000 ) // ms
-#define BUILDIN_LED_TOGGLE      ( 1000 ) // ms
 
 // ***** TYPEDEFS *****
 typedef enum {
@@ -21,6 +20,65 @@ typedef enum {
   BTN_8,
   BTN_COUNT
 } Button_t;
+
+class RelaySM {
+  typedef enum {
+    RELAY_STATE_IDLE,
+    RELAY_STATE_ON,
+    RELAY_STATE_OFF
+  } RelayState_t;
+
+  private:
+    unsigned long previousMillis;
+    long interval; 
+    int relayPort;
+    int id;
+    RelayState_t state;
+
+  public:
+    RelaySM(int relayPort, int id) {
+      this->relayPort = relayPort;
+      this->id = id;
+      this->previousMillis = millis();
+      this->state = RELAY_STATE_IDLE;
+      pinMode(this->relayPort, OUTPUT);
+      digitalWrite(this->relayPort, LOW);
+    }
+
+    void handler() {
+      unsigned long currentMillis = millis();
+      switch( this->state) {
+        case RELAY_STATE_ON:
+          if (currentMillis - this->previousMillis >= RELAY_ON_TIME) {
+            this->state = RELAY_STATE_OFF;
+            digitalWrite(this->relayPort, LOW);
+            this->previousMillis = millis();
+            Serial.print("Relay ");
+            Serial.print(this->id);
+            Serial.println(" OFF");
+          }
+          break;
+        case RELAY_STATE_OFF:
+          if (currentMillis - this->previousMillis >= RELAY_OFF_TIME) {
+            this->state = RELAY_STATE_IDLE;
+          }
+          break;
+        default:
+          break;
+      };
+    }
+
+    void trig() {
+      if (this->state == RELAY_STATE_IDLE) {
+        this->state = RELAY_STATE_ON;
+        digitalWrite(this->relayPort, HIGH);
+        this->previousMillis = millis();
+        Serial.print("Relay ");
+        Serial.print(this->id);
+        Serial.println(" ON");
+      }
+    }
+};
 
 // ***** CONSTANTS *****
 const uint32_t buttonsCodeMap[BTN_COUNT] = {
@@ -38,30 +96,32 @@ const int dipSwitchPins[DIP_SWITCH_INPUTS_CNT] = { 3, 4, 5, 6, 7, 8 };
 
 // ***** GLOBAL VARIBLES *****
 RCSwitch receiver = RCSwitch();
-auto timer = timer_create_default();
+auto timer1s = timer_create_default();
+RelaySM relay1(RELAY_1_PORT, 1);
+RelaySM relay2(RELAY_2_PORT, 2);
 uint8_t ch1Channel;
 uint8_t ch2Channel;
 
-
 // ***** GLOBAL FUNCTIONS *****
 void setup() {
-  pinMode(RELAY_1_PORT, OUTPUT);
-  pinMode(RELAY_2_PORT, OUTPUT);
-  digitalWrite(RELAY_1_PORT, LOW);
-  digitalWrite(RELAY_1_PORT, LOW);
   pinMode(LED_BUILTIN, OUTPUT);
   for (int i = 0; i < DIP_SWITCH_INPUTS_CNT; i++) {
     pinMode(dipSwitchPins[i], INPUT_PULLUP);
   }
-  readDipSwitch(NULL);
+  readDipSwitch();
   Serial.begin(9600);
   receiver.enableReceive(0);
-  timer.every(DIP_SWITCH_READ_PERIOD, readDipSwitch);
-  timer.every(BUILDIN_LED_TOGGLE, buildinLedBlink);
+  timer1s.every(1000, [](void*){
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    readDipSwitch();
+    return true;
+  });
 }
 
 void loop() {
-  timer.tick();
+  timer1s.tick();
+  relay1.handler();
+  relay2.handler();
   if (receiver.available()) {
     if (receiver.getReceivedBitlength() == 24) {
       uint32_t btnCode = receiver.getReceivedValue();
@@ -70,14 +130,10 @@ void loop() {
           Serial.print("Pressed button ");
           Serial.println(i+1);
           if (i == ch1Channel) {
-            digitalWrite(RELAY_1_PORT, HIGH);
-            timer.in(RELAY_PULSE_DURATION, relay1Off);
-            Serial.println("Relay 1 ON");
+            relay1.trig();
           }
           if (i == ch2Channel) {
-            digitalWrite(RELAY_2_PORT, HIGH);
-            timer.in(RELAY_PULSE_DURATION, relay2Off);
-            Serial.println("Relay 2 ON");
+            relay2.trig();
           }
         }
       }
@@ -86,8 +142,7 @@ void loop() {
   }
 }
 
-// ***** LOCAL FUNCTIONS *****
-static bool readDipSwitch(void *) 
+static void readDipSwitch()
 {
   uint8_t addr = 0;
   for (int i = 0; i < DIP_SWITCH_INPUTS_CNT; i++) {
@@ -97,25 +152,5 @@ static bool readDipSwitch(void *)
   }
   ch1Channel = addr & 0x7;
   ch2Channel = (addr >> 3) & 0x7;
-  return true; // to repeat the action - false to stop
 }
 
-static bool relay1Off(void *)
-{
-  digitalWrite(RELAY_1_PORT, LOW);
-  Serial.println("Relay 1 OFF");
-  return true;
-}
-
-static bool relay2Off(void *)
-{
-  digitalWrite(RELAY_2_PORT, LOW);
-  Serial.println("Relay 1 OFF");
-  return true;
-}
-
-static bool buildinLedBlink(void *)
-{
-  digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-  return true;
-}
